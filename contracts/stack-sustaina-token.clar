@@ -47,3 +47,87 @@
         carbon-credits: uint
     }
 )
+
+;; constants
+;;
+;; Private functions
+(define-private (check-recipient (recipient principal))
+    (ok (asserts! (not (is-eq recipient tx-sender)) ERR-INVALID-RECIPIENT)))
+
+;; data vars
+;;
+(define-private (check-name-length (name (string-ascii 64)))
+    (ok (asserts! (> (len name) u0) ERR-EMPTY-NAME)))
+
+;; data maps
+;;
+;; Read-only functions
+(define-read-only (get-name)
+    (ok TOKEN-NAME))
+
+;; public functions
+;;
+(define-read-only (get-symbol)
+    (ok TOKEN-SYMBOL))
+
+;; read only functions
+;;
+(define-read-only (get-decimals)
+    (ok TOKEN-DECIMALS))
+
+;; private functions
+;;
+(define-read-only (get-balance (account principal))
+    (ok (default-to u0 (map-get? balances account))))
+
+(define-read-only (get-total-supply)
+    (ok (var-get total-supply)))
+
+(define-read-only (get-current-cap)
+    (ok (var-get current-cap)))
+
+(define-read-only (get-burn-rate)
+    (ok (var-get burn-rate)))
+
+(define-read-only (is-exempted (account principal))
+    (default-to false (map-get? burn-exemptions account)))
+
+(define-read-only (get-business-info (business principal))
+    (map-get? verified-businesses business))
+
+;; Administrative functions
+(define-public (set-administrator (new-admin principal))
+    (begin
+        (asserts! (is-eq tx-sender (var-get administrator)) ERR-NOT-ADMINISTRATOR)
+        (try! (check-recipient new-admin))
+        (var-set administrator new-admin)
+        (ok true)))
+
+(define-public (pause-contract)
+    (begin
+        (asserts! (is-eq tx-sender (var-get administrator)) ERR-NOT-ADMINISTRATOR)
+        (var-set paused true)
+        (ok true)))
+
+(define-public (unpause-contract)
+    (begin
+        (asserts! (is-eq tx-sender (var-get administrator)) ERR-NOT-ADMINISTRATOR)
+        (var-set paused false)
+        (ok true)))
+
+;; Business verification functions
+(define-public (register-business (business principal) (name (string-ascii 64)) (initial-credits uint))
+    (begin
+        (asserts! (is-eq tx-sender (var-get administrator)) ERR-NOT-ADMINISTRATOR)
+        (asserts! (is-none (map-get? verified-businesses business)) ERR-ALREADY-REGISTERED)
+        (try! (check-recipient business))
+        (try! (check-name-length name))
+
+        (map-set verified-businesses
+            business
+            {
+                business-name: name,
+                verification-date: block-height,
+                carbon-credits: initial-credits
+            })
+        (ok true)))
