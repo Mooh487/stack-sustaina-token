@@ -131,3 +131,102 @@
                 carbon-credits: initial-credits
             })
         (ok true)))
+
+;; Supply control functions
+(define-public (adjust-cap (new-cap uint))
+    (begin
+        (asserts! (is-eq tx-sender (var-get administrator)) ERR-NOT-ADMINISTRATOR)
+        (asserts! (not (var-get paused)) ERR-NOT-AUTHORIZED)
+        (asserts! (>= new-cap (var-get total-supply)) ERR-INVALID-AMOUNT)
+        (var-set current-cap new-cap)
+        (ok true)))
+
+(define-public (update-burn-rate (new-rate uint))
+    (begin
+        (asserts! (is-eq tx-sender (var-get administrator)) ERR-NOT-ADMINISTRATOR)
+        (asserts! (<= new-rate MAX-BURN-RATE) ERR-INVALID-PARAMETER)
+        (var-set burn-rate new-rate)
+        (ok true)))
+
+(define-public (set-burn-exemption (address principal) (exempt bool))
+    (begin
+        (asserts! (is-eq tx-sender (var-get administrator)) ERR-NOT-ADMINISTRATOR)
+        (try! (check-recipient address))
+        (map-set burn-exemptions address exempt)
+        (ok true)))
+
+;; Token operations
+(define-public (mint (amount uint) (recipient principal))
+    (begin
+        (asserts! (is-eq tx-sender (var-get administrator)) ERR-NOT-ADMINISTRATOR)
+        (asserts! (not (var-get paused)) ERR-NOT-AUTHORIZED)
+        (asserts! (<= (+ (var-get total-supply) amount) (var-get current-cap)) ERR-CAP-REACHED)
+        (try! (check-recipient recipient))
+
+        (map-set balances
+            recipient
+            (+ (default-to u0 (map-get? balances recipient)) amount))
+        (var-set total-supply (+ (var-get total-supply) amount))
+        (ok true)))
+
+(define-public (transfer (amount uint) (recipient principal))
+    (let (
+        (sender-balance (default-to u0 (map-get? balances tx-sender)))
+        (burn-amount (if (is-exempted tx-sender)
+            u0
+            (/ (* amount (var-get burn-rate)) u1000)))
+        (transfer-amount (- amount burn-amount))
+    )
+    (begin
+        (asserts! (not (var-get paused)) ERR-NOT-AUTHORIZED)
+        (asserts! (>= sender-balance amount) ERR-INSUFFICIENT-BALANCE)
+        (try! (check-recipient recipient))
+
+        ;; Process burning
+        (if (> burn-amount u0)
+            (begin
+                (var-set total-supply (- (var-get total-supply) burn-amount))
+
+                ;; Adjust cap if burn threshold is reached
+                (if (>= burn-amount (var-get burn-threshold))
+                    (var-set current-cap (- (var-get current-cap) burn-amount))
+                    true)
+            )
+            true)
+
+        ;; Process transfer
+        (map-set balances
+            tx-sender
+            (- sender-balance amount))
+
+        (map-set balances
+            recipient
+            (+ (default-to u0 (map-get? balances recipient)) transfer-amount))
+
+        (ok true))))
+
+;; Emergency functions
+(define-public (emergency-burn (amount uint))
+    (begin
+        (asserts! (is-eq tx-sender (var-get administrator)) ERR-NOT-ADMINISTRATOR)
+        (asserts! (<= amount (var-get total-supply)) ERR-INSUFFICIENT-BALANCE)
+
+        (var-set total-supply (- (var-get total-supply) amount))
+        (var-set current-cap (- (var-get current-cap) amount))
+        (ok true)))
+
+(define-public (emergency-transfer (from principal) (to principal) (amount uint))
+    (begin
+        (asserts! (is-eq tx-sender (var-get administrator)) ERR-NOT-ADMINISTRATOR)
+        (asserts! (>= (default-to u0 (map-get? balances from)) amount) ERR-INSUFFICIENT-BALANCE)
+        (try! (check-recipient to))
+
+        (map-set balances
+            from
+            (- (default-to u0 (map-get? balances from)) amount))
+
+        (map-set balances
+            to
+            (+ (default-to u0 (map-get? balances to)) amount))
+        (ok true)))
+
